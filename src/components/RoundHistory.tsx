@@ -1,16 +1,19 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronUp, Crown, Skull } from 'lucide-react'
+import { ChevronDown, ChevronUp, Crown, Skull, Pencil, Trash2 } from 'lucide-react'
 import type { RoundHistoryEntry } from '../types'
 import { cn } from '../utils/cn'
 
 interface RoundHistoryProps {
   entries: RoundHistoryEntry[]
   playerNames: Map<string, string>
+  editingRound?: number | null
+  onEdit?: (roundNumber: number) => void
+  onDelete?: (roundNumber: number) => void
 }
 
 const PLAYER_COLORS = ['text-blue-400', 'text-amber-400', 'text-emerald-400', 'text-rose-400']
 
-export default function RoundHistory({ entries, playerNames }: RoundHistoryProps) {
+export default function RoundHistory({ entries, playerNames, editingRound, onEdit, onDelete }: RoundHistoryProps) {
   const [open, setOpen] = useState(false)
 
   if (entries.length === 0) {
@@ -47,23 +50,61 @@ export default function RoundHistory({ entries, playerNames }: RoundHistoryProps
           {[...entries].reverse().map((entry) => (
             <div
               key={entry.roundNumber}
-              className="rounded-xl border border-border bg-surface-alt/30 overflow-hidden"
+              className={cn(
+                'rounded-xl border overflow-hidden',
+                editingRound === entry.roundNumber
+                  ? 'border-accent-400/50 bg-accent-500/5 ring-1 ring-accent-400/20'
+                  : 'border-border bg-surface-alt/30'
+              )}
             >
-              {/* Header: round number + mode badge */}
+              {/* Header: round number + mode badge + actions */}
               <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/50">
-                <span className="text-sm font-semibold text-white">
-                  第 {entry.roundNumber} 局
-                </span>
-                <span
-                  className={cn(
-                    'inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold',
-                    entry.outcomeMode === 'big_win'
-                      ? 'bg-primary-500/15 text-primary-300 border border-primary-500/25'
-                      : 'bg-accent-500/10 text-accent-300 border border-accent-500/25'
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-white">
+                    第 {entry.roundNumber} 局
+                  </span>
+                  {editingRound === entry.roundNumber && (
+                    <span className="text-[10px] text-accent-400 font-semibold">编辑中</span>
                   )}
-                >
-                  {entry.outcomeMode === 'big_win' ? '大胜 ±2' : '小胜 ±1'}
-                </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span
+                    className={cn(
+                      'inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold',
+                      entry.outcomeMode === 'big_win'
+                        ? 'bg-primary-500/15 text-primary-300 border border-primary-500/25'
+                        : 'bg-accent-500/10 text-accent-300 border border-accent-500/25'
+                    )}
+                  >
+                    {entry.outcomeMode === 'big_win' ? '大胜 ±2' : '小胜 ±1'}
+                  </span>
+                  {onEdit && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onEdit(entry.roundNumber)
+                      }}
+                      aria-label={`编辑第 ${entry.roundNumber} 局`}
+                      className="ml-1 flex items-center justify-center w-7 h-7 rounded-lg text-slate-500 hover:text-primary-400 hover:bg-slate-800 transition-colors"
+                    >
+                      <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                  )}
+                  {onDelete && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onDelete(entry.roundNumber)
+                      }}
+                      aria-label={`删除第 ${entry.roundNumber} 局`}
+                      className="flex items-center justify-center w-7 h-7 rounded-lg text-slate-500 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Player grid: 4 columns */}

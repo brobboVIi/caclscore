@@ -75,6 +75,33 @@ export function updateCumulative(
   return next
 }
 
+/** 从历史记录全量重建累计分数 */
+export function recomputeCumulativeFromHistory(
+  entries: { players: PlayerRoundData[]; outcomeMode: OutcomeMode }[],
+  playerIds: string[]
+): Map<string, CumulativeScore> {
+  const cumulative = new Map<string, CumulativeScore>()
+  for (const id of playerIds) {
+    cumulative.set(id, { ...ZERO_CUMULATIVE })
+  }
+  for (const entry of entries) {
+    const breakdowns = calcAllBreakdowns(entry.players, entry.outcomeMode, true)
+    for (const p of entry.players) {
+      const old = cumulative.get(p.id) ?? { ...ZERO_CUMULATIVE }
+      const bd = breakdowns.get(p.id)!
+      cumulative.set(p.id, {
+        bonusEarned: old.bonusEarned + bd.bonusSelf,
+        bonusLost: old.bonusLost + bd.bonusFromOthers,
+        outcomeNet: old.outcomeNet + bd.outcomeScore,
+        wins: old.wins + (p.isWinner ? 1 : 0),
+        losses: old.losses + (p.isWinner ? 0 : 1),
+        grandTotal: old.grandTotal + bd.roundTotal,
+      })
+    }
+  }
+  return cumulative
+}
+
 /** 校验本局是否可确认 */
 export function canConfirm(
   outcomeMode: OutcomeMode | null,

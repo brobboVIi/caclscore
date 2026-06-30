@@ -10,7 +10,6 @@ interface SerializedEntry {
 }
 
 interface PersistedState {
-  round: number
   cumulative: [string, CumulativeScore][]
   playerNames: [string, string][]
   roundHistory: SerializedEntry[]
@@ -33,13 +32,11 @@ function deserializeHistory(entries: SerializedEntry[]): RoundHistoryEntry[] {
 }
 
 export function saveState(
-  round: number,
   cumulative: Map<string, CumulativeScore>,
   playerNames: Map<string, string>,
   roundHistory: RoundHistoryEntry[],
 ): void {
   const data: PersistedState = {
-    round,
     cumulative: [...cumulative],
     playerNames: [...playerNames],
     roundHistory: serializeHistory(roundHistory),
@@ -56,7 +53,7 @@ export function loadState(): PersistedState | null {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
     const data = JSON.parse(raw) as PersistedState
-    if (typeof data.round !== 'number' || !Array.isArray(data.cumulative) || !Array.isArray(data.roundHistory)) {
+    if (!Array.isArray(data.cumulative) || !Array.isArray(data.roundHistory)) {
       return null
     }
     // Convert serialized history back with real Maps

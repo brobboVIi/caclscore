@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { Check, RotateCcw } from 'lucide-react'
 import type { OutcomeMode, PlayerRoundData, CumulativeScore, RoundHistoryEntry } from './types'
-import { calcAllBreakdowns, updateCumulative, canConfirm } from './utils/scoring'
+import { calcAllBreakdowns, recomputeCumulativeFromHistory, canConfirm } from './utils/scoring'
 import { cn } from './utils/cn'
 import Header from './components/Header'
 import OutcomeModeSelector from './components/OutcomeModeSelector'
@@ -26,26 +26,35 @@ function createDefaultNames(): Map<string, string> {
   return m
 }
 
+function hasUnconfirmedData(players: PlayerRoundData[]): boolean {
+  return players.some((p) => p.bonusCount !== 0 || p.isWinner)
+}
+
 export default function App() {
   const saved = useRef(loadState())
-  const [round, setRound] = useState(saved.current?.round ?? 1)
+  const initialHistory = (saved.current?.roundHistory as RoundHistoryEntry[] | undefined) ?? []
+  const [roundHistory, setRoundHistory] = useState<RoundHistoryEntry[]>(initialHistory)
+  const [editingRound, setEditingRound] = useState<number | null>(null)
   const [outcomeMode, setOutcomeMode] = useState<OutcomeMode>('big_win')
   const [players, setPlayers] = useState<PlayerRoundData[]>(createFreshPlayers)
   const [cumulative, setCumulative] = useState<Map<string, CumulativeScore>>(
-    () => (saved.current ? new Map(saved.current.cumulative) : new Map())
+    () => recomputeCumulativeFromHistory(initialHistory, PLAYER_IDS)
   )
   const [playerNames, setPlayerNames] = useState<Map<string, string>>(
     () => (saved.current ? new Map(saved.current.playerNames) : createDefaultNames())
   )
   const [resetDialogOpen, setResetDialogOpen] = useState(false)
-  const [roundHistory, setRoundHistory] = useState<RoundHistoryEntry[]>(
-    (saved.current?.roundHistory as RoundHistoryEntry[] | undefined) ?? []
-  )
+
+  // round is derived from history length
+  const round = roundHistory.length + 1
 
   // Persist to localStorage whenever durable state changes
   useEffect(() => {
-    saveState(round, cumulative, playerNames, roundHistory)
-  }, [round, cumulative, playerNames, roundHistory])
+    saveState(cumulative, playerNames, roundHistory)
+  }, [cumulative, playerNames, roundHistory])
+
+  const [discardDialogTarget, setDiscardDialogTarget] = useState<number | null>(null)
+  const [deleteDialogTarget, setDeleteDialogTarget] = useState<number | null>(null)
 
   // Derived state
   const winnerCount = useMemo(
@@ -97,20 +106,71 @@ export default function App() {
 
     const confirmedBreakdowns = calcAllBreakdowns(players, outcomeMode, winnersConfirmed)
 
-    setRoundHistory((prev) => [
-      ...prev,
-      {
-        roundNumber: round,
+    setRoundHistory((prev) => {
+      const entry = {
+        roundNumber: editingRound ?? prev.length + 1,
         outcomeMode,
         players: players.map((p) => ({ ...p })),
         breakdowns: confirmedBreakdowns,
-      },
-    ])
-
-    setCumulative((prev) => updateCumulative(prev, players, outcomeMode))
-    setRound((r) => r + 1)
+      }
+      const next = editingRound != null
+        ? prev.map((e) => (e.roundNumber === editingRound ? entry : e))
+        : [...prev, entry]
+      setCumulative(recomputeCumulativeFromHistory(next, PLAYER_IDS))
+      return next
+    })
     setPlayers(createFreshPlayers())
-  }, [ready, players, outcomeMode, round, winnersConfirmed])
+    setEditingRound(null)
+  }, [ready, players, outcomeMode, winnersConfirmed, editingRound])
+
+  const handleEditHistory = useCallback((roundNumber: number) => {
+    if (hasUnconfirmedData(players)) {
+      setDiscardDialogTarget(roundNumber)
+      return
+    }
+    const entry = roundHistory.find((e) => e.roundNumber === roundNumber)
+    if (!entry) return
+    setPlayers(entry.players.map((p) => ({ ...p })))
+    setOutcomeMode(entry.outcomeMode)
+    setEditingRound(roundNumber)
+  }, [players, roundHistory])
+
+  const handleDeleteHistory = useCallback((roundNumber: number) => {
+    setDeleteDialogTarget(roundNumber)
+  }, [])
+
+  const doDeleteHistory = useCallback((roundNumber: number) => {
+    if (editingRound === roundNumber) {
+      setPlayers(createFreshPlayers())
+      setEditingRound(null)
+    }
+    setRoundHistory((prev) => {
+      const filtered = prev.filter((e) => e.roundNumber !== roundNumber)
+      // Renumber subsequent rounds
+      const renumbered = filtered.map((e, i) => ({
+        ...e,
+        roundNumber: i + 1,
+      }))
+      setCumulative(recomputeCumulativeFromHistory(renumbered, PLAYER_IDS))
+      return renumbered
+    })
+    setDeleteDialogTarget(null)
+  }, [editingRound])
+
+  const handleCancelEdit = useCallback(() => {
+    setPlayers(createFreshPlayers())
+    setEditingRound(null)
+  }, [])
+
+  const doDiscardAndEdit = useCallback(() => {
+    if (discardDialogTarget == null) return
+    const entry = roundHistory.find((e) => e.roundNumber === discardDialogTarget)
+    setDiscardDialogTarget(null)
+    if (!entry) return
+    setPlayers(entry.players.map((p) => ({ ...p })))
+    setOutcomeMode(entry.outcomeMode)
+    setEditingRound(discardDialogTarget)
+  }, [discardDialogTarget, roundHistory])
 
   const handleNameChange = useCallback((playerId: string, name: string) => {
     setPlayerNames((prev) => {
@@ -121,12 +181,12 @@ export default function App() {
   }, [])
 
   const handleReset = useCallback(() => {
-    setRound(1)
     setPlayers(createFreshPlayers())
     setCumulative(new Map())
     setPlayerNames(createDefaultNames())
     setOutcomeMode('big_win')
     setRoundHistory([])
+    setEditingRound(null)
     clearState()
   }, [])
 
@@ -134,7 +194,7 @@ export default function App() {
     <div className="min-h-dvh bg-surface">
       {/* Sticky header: always compact, no layout shift */}
       <div className="sticky top-0 z-20 bg-surface border-b border-border/50">
-        <Header round={round} />
+        <Header round={round} editingRound={editingRound} onCancelEdit={handleCancelEdit} />
         <div className="max-w-4xl mx-auto px-4 pb-2">
           <InlineScoreBar
             playerIds={PLAYER_IDS}
@@ -154,7 +214,13 @@ export default function App() {
           onNameChange={handleNameChange}
         />
         {/* Round History */}
-        <RoundHistory entries={roundHistory} playerNames={playerNames} />
+        <RoundHistory
+          entries={roundHistory}
+          playerNames={playerNames}
+          editingRound={editingRound}
+          onEdit={handleEditHistory}
+          onDelete={handleDeleteHistory}
+        />
 
         {/* Outcome Mode Selector */}
         <OutcomeModeSelector value={outcomeMode} onChange={setOutcomeMode} />
@@ -193,7 +259,7 @@ export default function App() {
             type="button"
             onClick={handleConfirm}
             disabled={!ready}
-            aria-label="确认本局，进入下一局"
+            aria-label={editingRound != null ? '保存修改' : '确认本局，进入下一局'}
             className={cn(
               'flex-1 flex items-center justify-center gap-2 px-6 py-4 rounded-2xl font-semibold text-base transition-all duration-300',
               'touch-manipulation active:scale-[0.98]',
@@ -203,20 +269,33 @@ export default function App() {
             )}
           >
             <Check className="w-5 h-5" aria-hidden="true" />
-            确认本局
-            <span className="text-xs opacity-60">
-              (进入第 {round + 1} 局)
-            </span>
+            {editingRound != null ? '保存修改' : '确认本局'}
+            {editingRound == null && (
+              <span className="text-xs opacity-60">
+                (进入第 {round + 1} 局)
+              </span>
+            )}
           </button>
 
-          <button
-            type="button"
-            onClick={() => setResetDialogOpen(true)}
-            aria-label="重置所有数据"
-            className="flex items-center justify-center w-14 h-14 rounded-2xl border border-border bg-surface-alt text-slate-500 hover:text-destructive hover:border-destructive/30 hover:bg-destructive/10 transition-all duration-200 touch-manipulation active:scale-95"
-          >
-            <RotateCcw className="w-5 h-5" aria-hidden="true" />
-          </button>
+          {editingRound != null ? (
+            <button
+              type="button"
+              onClick={handleCancelEdit}
+              aria-label="取消编辑"
+              className="flex items-center justify-center px-4 h-14 rounded-2xl border border-border bg-surface-alt text-slate-500 hover:text-destructive hover:border-destructive/30 hover:bg-destructive/10 transition-all duration-200 touch-manipulation active:scale-95 text-sm font-medium"
+            >
+              取消编辑
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setResetDialogOpen(true)}
+              aria-label="重置所有数据"
+              className="flex items-center justify-center w-14 h-14 rounded-2xl border border-border bg-surface-alt text-slate-500 hover:text-destructive hover:border-destructive/30 hover:bg-destructive/10 transition-all duration-200 touch-manipulation active:scale-95"
+            >
+              <RotateCcw className="w-5 h-5" aria-hidden="true" />
+            </button>
+          )}
         </div>
       </main>
 
@@ -236,6 +315,28 @@ export default function App() {
           setResetDialogOpen(false)
         }}
         onCancel={() => setResetDialogOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={discardDialogTarget != null}
+        title="放弃当前数据？"
+        message={`当前有未保存的输入数据，是否放弃并编辑第 ${discardDialogTarget ?? ''} 局？`}
+        confirmLabel="放弃并编辑"
+        cancelLabel="取消"
+        variant="default"
+        onConfirm={doDiscardAndEdit}
+        onCancel={() => setDiscardDialogTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={deleteDialogTarget != null}
+        title={`删除第 ${deleteDialogTarget ?? ''} 局？`}
+        message="此操作不可撤销，后续局数编号将自动重排。"
+        confirmLabel="确认删除"
+        cancelLabel="取消"
+        variant="danger"
+        onConfirm={() => deleteDialogTarget != null && doDeleteHistory(deleteDialogTarget)}
+        onCancel={() => setDeleteDialogTarget(null)}
       />
     </div>
   )
